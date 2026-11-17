@@ -318,19 +318,6 @@ def asset_download():
 @app.route("/download-zip", methods=["GET", "POST"])
 @app.route("/api/download-zip", methods=["GET", "POST"])
 def download_zip():
-def asset_download():
-    asset_id = request.args.get("id")
-    venue_id = request.args.get("venueId", "IN06")
-    if not asset_id:
-        return jsonify({"error": "Missing id"}), 400
-    try:
-        url = get_asset_url(venue_id, asset_id, download=True)
-        return redirect(url, code=302)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/download-zip", methods=["GET", "POST"])
-def download_zip():
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
         venue_id = body.get("venueId", "IN06")

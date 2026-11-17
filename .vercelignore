@@ -1,0 +1,6 @@
+server.py
+start.sh
+push_to_github.sh
+static/
+*.sh
+README.md
