@@ -260,12 +260,32 @@ def download_single_asset_bytes(venue_id, asset_id):
     return fetch_with_retry(url, headers={"User-Agent": "Mozilla/5.0"}, retries=3, timeout=30)
 
 # Routes
-@app.route("/", methods=["GET"])
-@app.route("/health", methods=["GET"])
-@app.route("/api", methods=["GET"])
-@app.route("/api/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok", "service": "Wonderla Photo API", "platform": "Vercel"})
+@app.route("/api", methods=["GET", "POST", "OPTIONS"])
+@app.route("/", methods=["GET", "POST", "OPTIONS"])
+def api_root():
+    matched = request.headers.get("x-matched-path") or request.headers.get("x-invoke-path") or ""
+    if "search" in matched:
+        return search()
+    elif "asset-preview" in matched:
+        return asset_preview()
+    elif "asset-download" in matched:
+        return asset_download()
+    elif "download-zip" in matched:
+        return download_zip()
+    elif "health" in matched:
+        return jsonify({"status": "ok", "service": "Wonderla Photo API", "platform": "Vercel"})
+
+    if request.method == "POST":
+        return search()
+
+    return jsonify({
+        "status": "ok",
+        "service": "Wonderla Photo API",
+        "platform": "Vercel",
+        "matched_path": matched,
+        "method": request.method,
+        "path": request.path
+    })
 
 @app.route("/search", methods=["POST"])
 @app.route("/api/search", methods=["POST"])
