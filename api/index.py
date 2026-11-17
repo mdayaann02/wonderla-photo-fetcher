@@ -260,10 +260,14 @@ def download_single_asset_bytes(venue_id, asset_id):
     return fetch_with_retry(url, headers={"User-Agent": "Mozilla/5.0"}, retries=3, timeout=30)
 
 # Routes
+@app.route("/", methods=["GET"])
+@app.route("/health", methods=["GET"])
+@app.route("/api", methods=["GET"])
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "Wonderla Photo API", "platform": "Vercel"})
 
+@app.route("/search", methods=["POST"])
 @app.route("/api/search", methods=["POST"])
 def search():
     body = request.get_json(silent=True) or {}
@@ -285,6 +289,7 @@ def search():
             "message": f"Server error: {str(e)}"
         }), 500
 
+@app.route("/asset-preview", methods=["GET"])
 @app.route("/api/asset-preview", methods=["GET"])
 def asset_preview():
     asset_id = request.args.get("id")
@@ -297,7 +302,22 @@ def asset_preview():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/asset-download", methods=["GET"])
 @app.route("/api/asset-download", methods=["GET"])
+def asset_download():
+    asset_id = request.args.get("id")
+    venue_id = request.args.get("venueId", "IN06")
+    if not asset_id:
+        return jsonify({"error": "Missing id"}), 400
+    try:
+        url = get_asset_url(venue_id, asset_id, download=True)
+        return redirect(url, code=302)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/download-zip", methods=["GET", "POST"])
+@app.route("/api/download-zip", methods=["GET", "POST"])
+def download_zip():
 def asset_download():
     asset_id = request.args.get("id")
     venue_id = request.args.get("venueId", "IN06")
