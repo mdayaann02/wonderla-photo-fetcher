@@ -263,29 +263,21 @@ def download_single_asset_bytes(venue_id, asset_id):
 @app.route("/api", methods=["GET", "POST", "OPTIONS"])
 @app.route("/", methods=["GET", "POST", "OPTIONS"])
 def api_root():
-    matched = request.headers.get("x-matched-path") or request.headers.get("x-invoke-path") or ""
-    if "search" in matched:
-        return search()
-    elif "asset-preview" in matched:
+    action = (request.args.get("action") or "").lower()
+    path = request.path.lower()
+
+    if "preview" in action or "preview" in path:
         return asset_preview()
-    elif "asset-download" in matched:
-        return asset_download()
-    elif "download-zip" in matched:
+    elif "download-zip" in action or "download-zip" in path or ("zip" in action):
         return download_zip()
-    elif "health" in matched:
+    elif "download" in action or "download" in path:
+        return asset_download()
+    elif "search" in action or "search" in path or request.method == "POST":
+        return search()
+    elif "health" in action or "health" in path:
         return jsonify({"status": "ok", "service": "Wonderla Photo API", "platform": "Vercel"})
 
-    if request.method == "POST":
-        return search()
-
-    return jsonify({
-        "status": "ok",
-        "service": "Wonderla Photo API",
-        "platform": "Vercel",
-        "matched_path": matched,
-        "method": request.method,
-        "path": request.path
-    })
+    return jsonify({"status": "ok", "service": "Wonderla Photo API", "platform": "Vercel"})
 
 @app.route("/search", methods=["POST"])
 @app.route("/api/search", methods=["POST"])
