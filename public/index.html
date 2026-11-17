@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Wonderla Photo Retrieval & Downloader</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- HTML5 QR Code Scanner Library (Local standalone) -->
+  <script src="html5-qrcode.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-badge">
+        <span>🎢</span> Wonderla Memories Portal
+      </div>
+      <h1 class="app-title">Wonderla Photo Retrieval</h1>
+      <p class="app-subtitle">
+        Enter your park wristband/ticket claim code or scan your QR code to instantly view and download your high-resolution ride photos.
+      </p>
+    </header>
+
+    <!-- Search Section -->
+    <section class="search-card">
+      <form id="search-form" onsubmit="handleSearch(event)">
+        <div class="input-group">
+          <div class="code-input-wrapper">
+            <span class="code-input-icon">🎟️</span>
+            <input 
+              type="text" 
+              id="claim-code-input" 
+              class="code-input" 
+              placeholder="e.g. WB41D99UDUNGM" 
+              autocomplete="off" 
+              autocapitalize="characters"
+              spellcheck="false"
+              required
+            >
+          </div>
+          <button type="submit" class="btn-search" id="btn-submit-search">
+            <span>🔍</span> Find Photos
+          </button>
+        </div>
+
+        <div class="search-options">
+          <div class="action-buttons">
+            <button type="button" class="btn-secondary" onclick="openScanner()">
+              <span>📷</span> Scan QR Code
+            </button>
+            <label class="btn-secondary" style="margin: 0; cursor: pointer;">
+              <span>📁</span> Upload QR Image
+              <input type="file" id="qr-file-input" accept="image/*" style="display: none;" onchange="handleQrFileUpload(event)">
+            </label>
+          </div>
+          <div class="sample-chip">
+            <span>Test with:</span>
+            <span class="sample-code-link" onclick="useSampleCode('WB41D99UDUNGM')">WB41D99UDUNGM</span>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="loading-indicator">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loading-title">Connecting to Wonderla Photo Engine...</div>
+      <div class="loading-subtext" id="loading-subtitle">Locating your park memories and ride captures</div>
+    </div>
+
+    <!-- Results Section -->
+    <section id="results-section" class="results-section">
+      <!-- Venue & Summary Card -->
+      <div class="results-header-card">
+        <div class="venue-meta">
+          <div class="venue-icon-box">🎡</div>
+          <div>
+            <div class="venue-title" id="res-venue-name">Wonderla Bangalore</div>
+            <div class="venue-details">
+              <span>Code: <span class="badge-code" id="res-code-badge">WB41D99UDUNGM</span></span>
+              <span>•</span>
+              <span id="res-photos-count">90 Photos Found</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="btn-primary" onclick="downloadAllZip()">
+            <span>📦</span> Download All as ZIP
+          </button>
+          <button class="btn-blue" onclick="saveToPhoneStorage()">
+            <span>💾</span> Save to Device Storage
+          </button>
+        </div>
+      </div>
+
+      <!-- Controls & Filters -->
+      <div class="control-bar">
+        <div class="filter-group">
+          <label for="ride-filter" style="font-size: 0.88rem; color: var(--text-muted);">Filter Ride:</label>
+          <select id="ride-filter" class="filter-select" onchange="filterPhotos()">
+            <option value="ALL">All Attractions & Rides</option>
+          </select>
+        </div>
+
+        <div class="selection-group">
+          <span id="selection-count">0 selected</span>
+          <button class="btn-text" onclick="selectAllPhotos(true)">Select All</button>
+          <span>|</span>
+          <button class="btn-text" onclick="selectAllPhotos(false)">Deselect All</button>
+          <button class="btn-secondary" id="btn-download-selected" style="display: none; padding: 4px 10px; font-size: 0.82rem;" onclick="downloadSelectedZip()">
+            <span>📥</span> Download Selected (<span id="btn-selected-count">0</span>)
+          </button>
+        </div>
+      </div>
+
+      <!-- Photos Grid -->
+      <div id="photos-grid" class="photos-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+  </div>
+
+  <!-- QR Camera Scanner Modal -->
+  <div id="scanner-modal" class="scanner-modal">
+    <div class="scanner-content">
+      <div class="scanner-header">
+        <h3>Scan Wristband / Ticket QR</h3>
+        <button class="btn-close" onclick="closeScanner()">&times;</button>
+      </div>
+      <div id="qr-reader"></div>
+      <p class="scanner-instructions">
+        Point your camera at the QR code on your Wonderla wristband or photo card.
+      </p>
+    </div>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <div id="lightbox-modal" class="lightbox-modal" onclick="handleLightboxBackdropClick(event)">
+    <div class="lightbox-topbar">
+      <div class="lightbox-title-box">
+        <span class="lightbox-ride-title" id="lightbox-ride">Ride Name</span>
+        <div class="lightbox-info-chips">
+          <span id="lightbox-date">Date</span>
+          <span>•</span>
+          <span id="lightbox-dim">Dimension</span>
+          <span>•</span>
+          <span id="lightbox-size">Size</span>
+        </div>
+      </div>
+
+      <div class="lightbox-actions">
+        <a id="lightbox-download-link" href="#" class="btn-primary" style="padding: 6px 14px; font-size: 0.85rem;" target="_blank">
+          <span>⬇️</span> Download Photo
+        </a>
+        <button class="btn-close" onclick="closeLightbox()">&times;</button>
+      </div>
+    </div>
+
+    <div class="lightbox-stage">
+      <button class="lightbox-nav-btn lightbox-prev" onclick="prevLightbox(event)">&#10094;</button>
+      <img id="lightbox-image" class="lightbox-img" src="" alt="Wonderla Photo Preview">
+      <button class="lightbox-nav-btn lightbox-next" onclick="nextLightbox(event)">&#10095;</button>
+    </div>
+  </div>
+
+  <!-- Device Save Progress Modal -->
+  <div id="progress-modal" class="progress-modal">
+    <div class="progress-card">
+      <div style="font-size: 2.2rem; margin-bottom: 8px;">💾</div>
+      <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 6px;" id="progress-modal-title">Saving Photos to Device</h3>
+      <p style="color: var(--text-muted); font-size: 0.88rem;" id="progress-modal-desc">
+        Saving directly to /sdcard/Download/Wonderla_Photos/
+      </p>
+
+      <div class="progress-bar-container">
+        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+      </div>
+
+      <div class="progress-stats" id="progress-stats-text">
+        Downloading 0 of 0 photos (0%)
+      </div>
+      <div style="font-size: 0.8rem; color: #64748b; margin-top: 6px; font-family: monospace;" id="progress-current-file">
+        Preparing...
+      </div>
+
+      <button id="progress-close-btn" class="btn-secondary" style="margin-top: 18px; display: none;" onclick="closeProgressModal()">
+        Done
+      </button>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- App Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
