@@ -138,6 +138,34 @@ function displayResults() {
   resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function handleImageLoaded(img, id) {
+  img.style.opacity = "1";
+  const spinner = document.getElementById(`spinner-${id}`);
+  if (spinner) spinner.style.display = "none";
+}
+
+function handleImageError(img, id, url) {
+  let retries = parseInt(img.getAttribute("data-retries") || "0", 10);
+  if (retries < 3) {
+    img.setAttribute("data-retries", retries + 1);
+    setTimeout(() => {
+      img.src = `${url}&_r=${retries + 1}`;
+    }, 1200 * (retries + 1));
+  } else {
+    const spinner = document.getElementById(`spinner-${id}`);
+    if (spinner) spinner.style.display = "none";
+    img.style.opacity = "0.75";
+    img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect fill="%231e293b" width="300" height="200"/><text fill="%2394a3b8" font-family="sans-serif" font-size="14" x="50%" y="45%" text-anchor="middle">Photo Temporarily Unavailable</text><text fill="%23f59e0b" font-family="sans-serif" font-weight="bold" font-size="12" x="50%" y="65%" text-anchor="middle">Tap to Retry</text></svg>';
+    img.style.cursor = "pointer";
+    img.onclick = (e) => {
+      e.stopPropagation();
+      img.setAttribute("data-retries", "0");
+      img.src = `${url}&_retry=${Date.now()}`;
+      if (spinner) spinner.style.display = "block";
+    };
+  }
+}
+
 function renderPhotosGrid() {
   photosGrid.innerHTML = "";
 
@@ -157,7 +185,14 @@ function renderPhotosGrid() {
 
     card.innerHTML = `
       <div class="photo-thumbnail-wrap" onclick="openLightbox(${idx})">
-        <img class="photo-thumbnail" src="${previewUrl}" alt="${photo.ride}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><text y=%2250%%22 x=%2250%%22 text-anchor=%22middle%22 fill=%22%23666%22>Photo</text></svg>'">
+        <div class="photo-loading-spinner" id="spinner-${photo.id}"></div>
+        <img class="photo-thumbnail" 
+             src="${previewUrl}" 
+             alt="${escapeHtml(photo.ride)}" 
+             loading="lazy" 
+             onload="handleImageLoaded(this, '${photo.id}')"
+             onerror="handleImageError(this, '${photo.id}', '${previewUrl}')"
+             data-retries="0">
         <div class="photo-badge-ride">
           <span>🎢</span> ${escapeHtml(photo.ride)}
         </div>
@@ -167,12 +202,12 @@ function renderPhotosGrid() {
       </div>
       <div class="photo-info">
         <div class="photo-meta-row">
-          <span>🕒 ${photo.captureDate.split(" ")[1] || photo.captureDate}</span>
-          <span>📐 ${photo.dimension || 'High Res'}</span>
+          <span>🕒 ${escapeHtml(photo.captureDate.split(" ")[1] || photo.captureDate)}</span>
+          <span>📐 ${escapeHtml(photo.dimension || 'High Res')}</span>
         </div>
         <div class="photo-meta-row">
-          <span>ID: ${photo.id.slice(-6)}</span>
-          <span style="color: #fbbf24; font-weight: 600;">${photo.sizeFormatted}</span>
+          <span>ID: ${escapeHtml(photo.id.slice(-6))}</span>
+          <span style="color: #fbbf24; font-weight: 600;">${escapeHtml(photo.sizeFormatted)}</span>
         </div>
         <div class="photo-card-actions">
           <button class="btn-card-action" onclick="openLightbox(${idx})">
@@ -297,8 +332,12 @@ function nextLightbox(e) {
 // Downloads & ZIP
 function downloadAllZip() {
   if (!currentPhotos || currentPhotos.length === 0) return;
-  const allIds = currentPhotos.map(p => p.id);
-  triggerZipDownload(allIds, `${currentAlbum.code}_All_Photos.zip`);
+  if (currentPhotos.length > 25) {
+    openBatchDownloadModal(currentPhotos, "All Photos");
+  } else {
+    const allIds = currentPhotos.map(p => p.id);
+    triggerZipDownload(allIds, `${currentAlbum.code}_All_Photos.zip`);
+  }
 }
 
 function downloadSelectedZip() {
@@ -306,15 +345,21 @@ function downloadSelectedZip() {
     showToast("No photos selected", "error");
     return;
   }
-  const ids = Array.from(selectedAssetIds);
-  triggerZipDownload(ids, `${currentAlbum.code}_Selected_Photos.zip`);
+  const selectedPhotos = currentPhotos.filter(p => selectedAssetIds.has(p.id));
+  if (selectedPhotos.length > 25) {
+    openBatchDownloadModal(selectedPhotos, "Selected Photos");
+  } else {
+    const ids = Array.from(selectedAssetIds);
+    triggerZipDownload(ids, `${currentAlbum.code}_Selected_Photos.zip`);
+  }
 }
 
-function triggerZipDownload(assetIds, zipName) {
+function triggerZipDownload(assetIds, zipName, part = "") {
   showToast(`Preparing ${assetIds.length} photos in ZIP...`, "info");
   const venueId = currentAlbum.venueId || "IN06";
   const idsParam = assetIds.join(",");
-  const url = `/api/download-zip?venueId=${encodeURIComponent(venueId)}&ids=${encodeURIComponent(idsParam)}&code=${encodeURIComponent(currentAlbum.code)}`;
+  const partParam = part ? `&part=${encodeURIComponent(part)}` : "";
+  const url = `/api/download-zip?venueId=${encodeURIComponent(venueId)}&ids=${encodeURIComponent(idsParam)}&code=${encodeURIComponent(currentAlbum.code)}${partParam}`;
   
   // Create hidden link to initiate browser file download
   const a = document.createElement("a");
@@ -323,6 +368,128 @@ function triggerZipDownload(assetIds, zipName) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+function openBatchDownloadModal(photosToDownload, titleContext = "Photos") {
+  const modal = document.getElementById("batch-download-modal");
+  const titleEl = document.getElementById("batch-download-title");
+  const container = document.getElementById("batch-download-options");
+  if (!modal || !container) return;
+
+  titleEl.textContent = `📦 Download ${titleContext} (${photosToDownload.length} Photos)`;
+  container.innerHTML = "";
+
+  // 1. Group by Ride/Attraction
+  const rides = {};
+  photosToDownload.forEach(p => {
+    const r = p.ride || "Wonderla";
+    if (!rides[r]) rides[r] = [];
+    rides[r].push(p);
+  });
+
+  const rideKeys = Object.keys(rides);
+  if (rideKeys.length > 1) {
+    const rideHeading = document.createElement("div");
+    rideHeading.style.cssText = "font-weight: 700; font-size: 0.92rem; color: #fbbf24; margin-top: 4px; margin-bottom: 2px;";
+    rideHeading.textContent = "🎢 Download by Attraction / Ride:";
+    container.appendChild(rideHeading);
+
+    rideKeys.forEach(rideName => {
+      const list = rides[rideName];
+      const row = document.createElement("div");
+      row.className = "batch-btn-row";
+      row.innerHTML = `
+        <div>
+          <span style="font-weight: 600;">${escapeHtml(rideName)}</span>
+          <div style="font-size: 0.78rem; color: var(--text-muted);">${list.length} photos</div>
+        </div>
+        <button class="btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">Download ZIP</button>
+      `;
+      row.onclick = () => {
+        downloadPhotoListInBatches(list, `${currentAlbum.code}_${rideName.replace(/[^a-zA-Z0-9]/g, '_')}`);
+      };
+      container.appendChild(row);
+    });
+  }
+
+  // 2. Partition into packages of 20
+  const pkgHeading = document.createElement("div");
+  pkgHeading.style.cssText = "font-weight: 700; font-size: 0.92rem; color: #fbbf24; margin-top: 12px; margin-bottom: 2px;";
+  pkgHeading.textContent = "📦 Download by Package (20 Photos Each):";
+  container.appendChild(pkgHeading);
+
+  const chunkSize = 20;
+  const totalChunks = Math.ceil(photosToDownload.length / chunkSize);
+
+  for (let c = 0; c < totalChunks; c++) {
+    const startIdx = c * chunkSize;
+    const endIdx = Math.min(startIdx + chunkSize, photosToDownload.length);
+    const chunkPhotos = photosToDownload.slice(startIdx, endIdx);
+    const partNum = c + 1;
+
+    const row = document.createElement("div");
+    row.className = "batch-btn-row";
+    row.innerHTML = `
+      <div>
+        <span style="font-weight: 600;">Part ${partNum} of ${totalChunks}</span>
+        <div style="font-size: 0.78rem; color: var(--text-muted);">Photos ${startIdx + 1} - ${endIdx} (${chunkPhotos.length} photos)</div>
+      </div>
+      <button class="btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">Download</button>
+    `;
+    row.onclick = () => {
+      triggerZipDownload(chunkPhotos.map(p => p.id), `${currentAlbum.code}_Part${partNum}.zip`, partNum);
+    };
+    container.appendChild(row);
+  }
+
+  // 3. Option to download all packages sequentially
+  const autoHeading = document.createElement("div");
+  autoHeading.style.cssText = "margin-top: 12px;";
+  const autoBtn = document.createElement("button");
+  autoBtn.className = "btn-blue";
+  autoBtn.style.cssText = "width: 100%; justify-content: center; padding: 12px;";
+  autoBtn.innerHTML = `<span>⚡</span> Download All ${totalChunks} Packages Sequentially`;
+  autoBtn.onclick = () => {
+    closeBatchDownloadModal();
+    showToast(`Starting sequential download of ${totalChunks} ZIP packages...`, "info");
+    for (let c = 0; c < totalChunks; c++) {
+      const startIdx = c * chunkSize;
+      const endIdx = Math.min(startIdx + chunkSize, photosToDownload.length);
+      const chunkPhotos = photosToDownload.slice(startIdx, endIdx);
+      const partNum = c + 1;
+      setTimeout(() => {
+        triggerZipDownload(chunkPhotos.map(p => p.id), `${currentAlbum.code}_Part${partNum}.zip`, partNum);
+      }, c * 2500);
+    }
+  };
+  autoHeading.appendChild(autoBtn);
+  container.appendChild(autoHeading);
+
+  modal.classList.add("active");
+}
+
+function closeBatchDownloadModal() {
+  const modal = document.getElementById("batch-download-modal");
+  if (modal) modal.classList.remove("active");
+}
+
+function downloadPhotoListInBatches(photos, namePrefix) {
+  const chunkSize = 20;
+  if (photos.length <= chunkSize) {
+    triggerZipDownload(photos.map(p => p.id), `${namePrefix}.zip`);
+    return;
+  }
+  const totalChunks = Math.ceil(photos.length / chunkSize);
+  showToast(`Downloading ${photos.length} photos in ${totalChunks} packages...`, "info");
+  for (let c = 0; c < totalChunks; c++) {
+    const startIdx = c * chunkSize;
+    const endIdx = Math.min(startIdx + chunkSize, photos.length);
+    const chunk = photos.slice(startIdx, endIdx);
+    const partNum = c + 1;
+    setTimeout(() => {
+      triggerZipDownload(chunk.map(p => p.id), `${namePrefix}_Part${partNum}.zip`, partNum);
+    }, c * 2500);
+  }
 }
 
 // Save Directly to Android Device Storage (/sdcard/Download)

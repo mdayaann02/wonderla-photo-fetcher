@@ -175,7 +175,7 @@ def search_photos(code):
         }).encode("utf-8")
 
         try:
-            raw = fetch_with_retry(search_url, headers=headers, data=body, retries=3, timeout=15)
+            raw = fetch_with_retry(f"{search_url}?page=1", headers=headers, data=body, retries=3, timeout=15)
             data = json.loads(raw.decode("utf-8"))
             total_files = data.get("total_files", 0)
             if total_files > 0:
@@ -200,32 +200,55 @@ def search_photos(code):
     all_results = list(first_page_res.get("result", []))
     all_extended = dict(first_page_res.get("extended_result", {}))
 
-    # Fetch subsequent pages if total_pages > 1
+    # WeCapture API uses ?page=p query parameter for pagination
     if total_pages > 1:
-        for p in range(2, total_pages + 1):
+        def fetch_page_data(p_num):
+            p_url = f"{search_url}?page={p_num}"
             p_body = json.dumps({
                 "extended_result": True,
                 "sort_by": ["assetId_ASC"],
-                "page": p,
                 "schema_criteria": {
                     "data_schema_id": "1",
                     "fields": {found_field: code}
                 }
             }).encode("utf-8")
             try:
-                p_raw = fetch_with_retry(search_url, headers=headers, data=p_body, retries=3, timeout=15)
-                p_data = json.loads(p_raw.decode("utf-8"))
+                p_raw = fetch_with_retry(p_url, headers=headers, data=p_body, retries=3, timeout=15)
+                return p_num, json.loads(p_raw.decode("utf-8"))
+            except Exception as err:
+                print(f"[Warning] Failed to fetch page {p_num}: {err}", file=sys.stderr)
+                return p_num, None
+
+        max_workers = min(8, total_pages - 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {executor.submit(fetch_page_data, p): p for p in range(2, total_pages + 1)}
+            page_data_map = {}
+            for fut in as_completed(future_to_page):
+                p_num, p_data = fut.result()
+                if p_data:
+                    page_data_map[p_num] = p_data
+
+        # Append in strict sequential page order
+        for p in range(2, total_pages + 1):
+            if p in page_data_map:
+                p_data = page_data_map[p]
                 all_results.extend(p_data.get("result", []))
                 all_extended.update(p_data.get("extended_result", {}))
-            except Exception as e:
-                print(f"[Warning] Failed to fetch page {p}: {e}", file=sys.stderr)
+
+    # Deduplicate asset IDs while maintaining discovery order
+    seen_ids = set()
+    unique_results = []
+    for aid in all_results:
+        if aid not in seen_ids:
+            seen_ids.add(aid)
+            unique_results.append(aid)
 
     # Process and structure photo items
     photos = []
     venue_name = "Wonderla"
     venue_id = "IN06"
 
-    for asset_id in all_results:
+    for asset_id in unique_results:
         asset_info = all_extended.get(asset_id, {})
         data_block = asset_info.get("data", {})
         metadata_block = asset_info.get("metadata", {})

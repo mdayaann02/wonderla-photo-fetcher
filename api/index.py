@@ -123,7 +123,6 @@ def search_photos(code):
         body = json.dumps({
             "extended_result": True,
             "sort_by": ["assetId_ASC"],
-            "page": 1,
             "schema_criteria": {
                 "data_schema_id": "1",
                 "fields": {field: code}
@@ -131,7 +130,8 @@ def search_photos(code):
         }).encode("utf-8")
 
         try:
-            raw = fetch_with_retry(search_url, headers=headers, data=body, retries=3, timeout=15)
+            # WeCapture API uses ?page=1 query param
+            raw = fetch_with_retry(f"{search_url}?page=1", headers=headers, data=body, retries=3, timeout=15)
             data = json.loads(raw.decode("utf-8"))
             total_files = data.get("total_files", 0)
             if total_files > 0:
@@ -155,30 +155,54 @@ def search_photos(code):
     all_results = list(first_page_res.get("result", []))
     all_extended = dict(first_page_res.get("extended_result", {}))
 
+    # Concurrently fetch pages 2..total_pages with ?page={p} query param
     if total_pages > 1:
-        for p in range(2, total_pages + 1):
+        def fetch_page_data(p_num):
+            p_url = f"{search_url}?page={p_num}"
             p_body = json.dumps({
                 "extended_result": True,
                 "sort_by": ["assetId_ASC"],
-                "page": p,
                 "schema_criteria": {
                     "data_schema_id": "1",
                     "fields": {found_field: code}
                 }
             }).encode("utf-8")
             try:
-                p_raw = fetch_with_retry(search_url, headers=headers, data=p_body, retries=3, timeout=15)
-                p_data = json.loads(p_raw.decode("utf-8"))
+                p_raw = fetch_with_retry(p_url, headers=headers, data=p_body, retries=3, timeout=15)
+                return p_num, json.loads(p_raw.decode("utf-8"))
+            except Exception as err:
+                print(f"[Warning] Failed to fetch page {p_num}: {err}", file=sys.stderr)
+                return p_num, None
+
+        max_workers = min(8, total_pages - 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {executor.submit(fetch_page_data, p): p for p in range(2, total_pages + 1)}
+            page_data_map = {}
+            for fut in as_completed(future_to_page):
+                p_num, p_data = fut.result()
+                if p_data:
+                    page_data_map[p_num] = p_data
+
+        # Append in strict sequential page order
+        for p in range(2, total_pages + 1):
+            if p in page_data_map:
+                p_data = page_data_map[p]
                 all_results.extend(p_data.get("result", []))
                 all_extended.update(p_data.get("extended_result", {}))
-            except Exception as e:
-                print(f"[Warning] Failed to fetch page {p}: {e}", file=sys.stderr)
+
+    # Deduplicate asset IDs while maintaining discovery order
+    seen_ids = set()
+    unique_results = []
+    for aid in all_results:
+        if aid not in seen_ids:
+            seen_ids.add(aid)
+            unique_results.append(aid)
 
     photos = []
     venue_name = "Wonderla"
     venue_id = "IN06"
 
-    for asset_id in all_results:
+    for asset_id in unique_results:
         asset_info = all_extended.get(asset_id, {})
         data_block = asset_info.get("data", {})
         metadata_block = asset_info.get("metadata", {})
@@ -235,25 +259,31 @@ def get_asset_url(venue_id, asset_id, download=False):
             if expiry > now:
                 return url
 
-    token = get_access_token()
     download_param = "true" if download else "false"
     api_url = f"https://apim.wecapture.life/api/v1/assets/{asset_id}/get_link?venueId={venue_id}&download={download_param}"
 
-    headers = {
-        "Channel": "B2C",
-        "ocp-apim-subscription-key": "983eadcf05954bc0bff4c15cf873b866",
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-    }
+    for attempt in range(2):
+        token = get_access_token(force_refresh=(attempt > 0))
+        headers = {
+            "Channel": "B2C",
+            "ocp-apim-subscription-key": "983eadcf05954bc0bff4c15cf873b866",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+        }
 
-    raw = fetch_with_retry(api_url, headers=headers, retries=3, timeout=15)
-    url = raw.decode("utf-8").strip()
-    if url.startswith("http"):
-        with link_cache_lock:
-            link_cache[cache_key] = (url, now + 7200)
-        return url
-    else:
-        raise ValueError(f"Invalid signed URL received: {url}")
+        try:
+            raw = fetch_with_retry(api_url, headers=headers, retries=2, timeout=15)
+            url = raw.decode("utf-8").strip().strip('"')
+            if url.startswith("http"):
+                with link_cache_lock:
+                    link_cache[cache_key] = (url, now + 7200)
+                return url
+            else:
+                raise ValueError(f"Invalid signed URL received: {url}")
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and attempt == 0:
+                continue
+            raise
 
 def download_single_asset_bytes(venue_id, asset_id):
     url = get_asset_url(venue_id, asset_id, download=True)
@@ -310,7 +340,9 @@ def asset_preview():
         return jsonify({"error": "Missing id"}), 400
     try:
         url = get_asset_url(venue_id, asset_id, download=False)
-        return redirect(url, code=302)
+        resp = redirect(url, code=302)
+        resp.headers["Cache-Control"] = "public, max-age=86400, s-maxage=86400, stale-while-revalidate=3600"
+        return resp
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -323,7 +355,9 @@ def asset_download():
         return jsonify({"error": "Missing id"}), 400
     try:
         url = get_asset_url(venue_id, asset_id, download=True)
-        return redirect(url, code=302)
+        resp = redirect(url, code=302)
+        resp.headers["Cache-Control"] = "public, max-age=86400, s-maxage=86400"
+        return resp
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -339,11 +373,19 @@ def download_zip():
         venue_id = request.args.get("venueId", "IN06")
         ids_str = request.args.get("ids", "")
         code = request.args.get("code", "Wonderla")
+        part = request.args.get("part", "")
         asset_ids = [i.strip() for i in ids_str.split(",") if i.strip()]
-        zip_name = f"{code}_Photos.zip"
+        if part:
+            zip_name = f"{code}_Photos_Part{part}.zip"
+        else:
+            zip_name = f"{code}_Photos.zip"
 
     if not asset_ids:
         return jsonify({"error": "No asset IDs provided"}), 400
+
+    # Safety limit per single zip to avoid Vercel 10s function timeouts
+    if len(asset_ids) > 25:
+        asset_ids = asset_ids[:25]
 
     try:
         zip_buffer = io.BytesIO()

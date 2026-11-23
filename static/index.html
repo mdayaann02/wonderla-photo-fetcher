@@ -55,6 +55,7 @@
           </div>
           <div class="sample-chip">
             <span>Test with:</span>
+            <span class="sample-code-link" onclick="useSampleCode('WB41D9ZU9UQEU')">WB41D9ZU9UQEU</span>
             <span class="sample-code-link" onclick="useSampleCode('WB41D99UDUNGM')">WB41D99UDUNGM</span>
           </div>
         </div>
@@ -187,6 +188,20 @@
       <button id="progress-close-btn" class="btn-secondary" style="margin-top: 18px; display: none;" onclick="closeProgressModal()">
         Done
       </button>
+    </div>
+  </div>
+
+  <!-- Batch Download Modal -->
+  <div id="batch-download-modal" class="scanner-modal" onclick="if(event.target===this)closeBatchDownloadModal()">
+    <div class="scanner-content" style="max-width: 520px; text-align: left;">
+      <div class="scanner-header">
+        <h3 id="batch-download-title">📦 Download Photo Packages</h3>
+        <button class="btn-close" onclick="closeBatchDownloadModal()">&times;</button>
+      </div>
+      <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">
+        To ensure fast, reliable downloads without server timeouts, your photos are grouped below. Select a package to start downloading:
+      </p>
+      <div id="batch-download-options" style="display: flex; flex-direction: column; gap: 10px; max-height: 340px; overflow-y: auto; padding-right: 4px;"></div>
     </div>
   </div>
 
